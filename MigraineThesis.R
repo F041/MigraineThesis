@@ -31,13 +31,13 @@ sprintf("%.4f", exp(glm1$coefficients))
 
 
 #### Preparazione dati ed Oversampling ------
-library(ROSE)
-prova<-ovun.sample(Migraine ~ ., data=dati, method="both", N=1600, seed=40); table(prova$data$Migraine)
-over<-prova$data
-split <- createDataPartition(y=over$Migraine, p = 0.66, list = FALSE)
-train <- over[split,]
-test <- over[-split,]
+split <- createDataPartition(y=dati$Migraine, p = 0.66, list = FALSE)
+train <- dati[split,]
+test <- dati[-split,]
 levels(train$Migraine) <- c("Yes", "No")
+library(ROSE)
+train<-ovun.sample(Migraine ~ ., data=train, method="both", N=1600, seed=40); table(train$data$Migraine)
+train<-train$data
 
 
 ####  Lasso -----
@@ -53,6 +53,7 @@ getTrainPerf(glm_lasso)
 
 ### Albero ------
 set.seed(1)
+train$Migraine<-as.factor(train$Migraine)
 levels(train$Migraine) <- c("Yes", "No")
 cvCtrl <- trainControl(method = "cv", number=10, search="grid", classProbs = TRUE,
                        summaryFunction = twoClassSummary)
@@ -147,6 +148,7 @@ test$p5 = predict(XGBTune, test, "prob")[,2]
 test$p6 = predict(AdaBTune, test, "prob")[,2]
 
 # roc values
+library(pROC)
 r1=roc(Migraine ~ p1, data = test)
 r2=roc(Migraine ~ p2, data = test)
 r3=roc(Migraine ~ p3, data = test)
@@ -160,17 +162,13 @@ plot(r3,add=T,col="blue") #RF
 plot(r4,add=T,col="yellow") #NN
 plot(r5,add=T,col="violet") #XGB
 plot(r6,add=T,col="orange") #Ada
-legend("bottomright", c("Tree", "Random Forest", "NN","XGB","ADA"))
-text.col=c("red","blue","yellow","violet","orange")
+legend("bottomright", c("Tree", "Random Forest", "NN","XGB","ADA"),
+       text.col=c("red","blue","yellow","violet","orange"))
+
 
 
 ### Scelta soglia migliore modello -----
-library(pROC)
-ROCit_obj <- rocit(score=test$p3,class=test$Migraine)
-plot(ROCit_obj) #suggerisce un 1-0.1, quindi 0.9
-
-#qualcosa di più approfondito
-pROC_obj <- roc(test$Migraine,test$p3,
+pROC_obj <- roc(test$Migraine,test$p6,
                 smoothed = TRUE,
                 # arguments for ci
                 ci=TRUE, ci.alpha=0.9, stratified=FALSE,
@@ -178,13 +176,13 @@ pROC_obj <- roc(test$Migraine,test$p3,
                 plot=TRUE, auc.polygon=TRUE, max.auc.polygon=TRUE, grid=TRUE,
                 print.auc=TRUE, show.thres=TRUE)
 
-plot(pROC_obj, print.thres = quantile(pROC_obj$thresholds, seq(0.4,0.95,0.4))) #suggerisce un 0.895, quindi uno 0.9
+plot(pROC_obj, print.thres = quantile(pROC_obj$thresholds, seq(0.4,0.95,0.2))) #suggerisce un 0.540
 
 
 ### Risultati miglior modello, RF ------
-test$labelsp3<-as.factor(ifelse(test$p3<0.9,0,1))
+test$labelsp6<-as.factor(ifelse(test$p6>0.540,1,0))
 test$Migraine<-as.factor(test$Migraine)
-cm<-confusionMatrix(test$labelsp3, test$Migraine, positive="1") #Tante metriche, bellissimo
+cm<-confusionMatrix(test$labelsp6, test$Migraine, positive="1") #Tante metriche, bellissimo
 
 draw_confusion_matrix <- function(cm) {
   
