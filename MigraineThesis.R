@@ -13,6 +13,8 @@ library(lme4)
 library(Hmisc)
 options("scipen"=999)
 
+setwd("F:/Users/F041/Documents/GitHub/MigraineThesis")
+
 ### Caricamento dati ------
 dati<-read.table("C:/Users/F041/Downloads/MigraineOctober2019 - Senza Inquinamento.csv", header = TRUE, sep = ",", dec=",")
 dati<-dati[1:999,]
@@ -22,13 +24,35 @@ dati$Mese<-as.numeric(format(dati$Mese,"%m"))
 dati$Quarti<- as.yearqtr(dati$Date, format = "%d/%m/%Y")
 dati$Date=as.numeric(dati$Date)
 
+lapply(dati, table)
+hist(dati$Stress)
+hist(dati$Uni.Lesson)
+
 ### Modello inferenziale escluse collinearità -----
+dati$Mese=as.factor(dati$Mese)
+
 glm1<-glm(Migraine~Uni.Lesson+Volo+FS+Quarti+Gym...P.A.+
-            AutoAltaPercorrenza+exp(Stress),data=dati)
+            Mese+AutoAltaPercorrenza+Mese+Chocolate+exp(Stress),data=dati, family="binomial")
 summary(glm1)
 exp(glm1$coefficients)
 sprintf("%.4f", exp(glm1$coefficients))
 
+
+Cindex(glm1)
+
+
+### GAM per trasformazioni covaraite ----
+gam1<-gam(Migraine ~ s(Date)+Uni.Lesson+Volo+FS+Quarti+Gym...P.A.+
+            AutoAltaPercorrenza+s(Stress), data= dati ) 
+summary(gam1)
+
+par(mfrow=c(2,2)) 
+plot(gam1) #solo stress vuole trasformata
+par(mfrow=c(1,1)) 
+
+glm2<-glm(Migraine~Uni.Lesson+Volo+FS+Quarti+Gym...P.A.+
+          AutoAltaPercorrenza+exp(Stress), family="binomial", data=dati)
+summary(glm2)
 
 #### Preparazione dati ed Oversampling ------
 split <- createDataPartition(y=dati$Migraine, p = 0.66, list = FALSE)
@@ -129,7 +153,7 @@ plot(varImp(object=AdaBTune),main="train tuned - Variable Importance")
 ### Risultati ----
 results <- resamples(list(Tree=rpartTuneCvA, RandomForest=rfTune, 
                           NeuralNet=NNTune, XGBoosting=XGBTune,
-                          PatientRules=PRIMTune, AdaBoost=AdaBTune));results #Se metto il lasso non funziona
+                          AdaBoost=AdaBTune));results #Se metto il lasso non funziona
 bwplot(results)
 # test difference of accuracy using bonferroni adjustement
 Diffs <- diff(results)
@@ -157,13 +181,13 @@ r5=roc(Migraine ~ p5, data = test)
 r6=roc(Migraine ~ p6, data = test)
 
 plot(r1) #lasso nero
-plot(r2,add=T,col="red") #Tree
+
 plot(r3,add=T,col="blue") #RF
 plot(r4,add=T,col="yellow") #NN
 plot(r5,add=T,col="violet") #XGB
 plot(r6,add=T,col="orange") #Ada
-legend("bottomright", c("Tree", "Random Forest", "NN","XGB","ADA"),
-       text.col=c("red","blue","yellow","violet","orange"))
+legend("bottomright", c("Lasso", "Random Forest", "NN","XGB","ADA"),
+       text.col=c("black","blue","yellow","violet","orange"))
 
 
 
@@ -179,7 +203,7 @@ pROC_obj <- roc(test$Migraine,test$p6,
 plot(pROC_obj, print.thres = quantile(pROC_obj$thresholds, seq(0.4,0.95,0.2))) #suggerisce un 0.540
 
 
-### Risultati miglior modello, RF ------
+### Risultati miglior modello, ADA ------
 test$labelsp6<-as.factor(ifelse(test$p6>0.540,1,0))
 test$Migraine<-as.factor(test$Migraine)
 cm<-confusionMatrix(test$labelsp6, test$Migraine, positive="1") #Tante metriche, bellissimo
@@ -246,3 +270,42 @@ draw_confusion_matrix <- function(cm) {
   text(70, 20, round(as.numeric(cm$overall[2]), 3), cex=1.4)
 }
 draw_confusion_matrix(cm)
+
+### Risultati modello base ----
+glmb<-glm(Migraine~Uni.Lesson+Volo+FS+Quarti+Gym...P.A.+
+            AutoAltaPercorrenza+Mese+Chocolate+Stress,data=train, family="binomial")
+summary(glmb)
+
+test$pb = predict(glmb, test, "response"); head(test$pb)
+test$labelspb<-as.factor(ifelse(test$pb>0.5,1,0))
+cm<-confusionMatrix(test$labelspb, test$Migraine, positive="1")
+draw_confusion_matrix(cm)
+
+rb=roc(Migraine ~ pb, data = test)
+
+plot(rb) 
+
+
+
+
+### Modello inferenziale 2 -----
+split2 <- createDataPartition(y=dati$Migraine, p = 0.832, list = TRUE)
+train2 <- dati[1:832,]
+train2<-ovun.sample(Migraine ~ ., data=train2, method="both", N=1600, seed=40); table(train2$data$Migraine)
+train2<-train2$data
+
+test2 <- dati[833:999,]
+
+glmT<-glm(Migraine~Uni.Lesson+Volo+FS+Gym...P.A.+Mese+
+            AutoAltaPercorrenza+Stress,data=train2)
+summary(glm1)
+test2$glmP<-predict(glmT, test2); 
+rglm=roc(Migraine ~ glmP, data = test2)
+plot(rglm) 
+
+test2$glmP<-as.factor(ifelse(test2$glmP>0.5,1,0))
+test2$Migraine<-as.factor(test2$Migraine)
+cm<-confusionMatrix(test2$glmP, test2$Migraine, positive="0")
+draw_confusion_matrix(cm)
+
+write.csv(test2,"C:/Users/F041/SkyDrive/Documenti/migraineDatiTest.csv", row.names = FALSE)
